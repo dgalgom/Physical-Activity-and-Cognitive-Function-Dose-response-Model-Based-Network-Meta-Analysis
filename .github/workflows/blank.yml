@@ -1,0 +1,150 @@
+#Title: Optimal dose and Type of physical Activity and Exercise to Improve Cognitive Function in Older Adults: A Systematic Review and Bayesian Dose-response 
+#Model-Based Network Meta-Analysis of RCTs.
+
+#Author: "Gallardo-Gómez, Daniel".
+
+#Date: "7/13/2021".
+
+#We have to load the packages that we are going to use.
+library(MBNMAdose)
+library(tidyverse)
+library(cowplot)
+library(janitor)
+library(patchwork)
+library(readxl)
+library(mcmcplots)
+library(rjags)
+library(multinma)
+mxOptions(key = "Number of Threads", value = parallel::detectCores())
+library(ggthemes)
+
+
+#INSPECTING THE DATA
+
+data <- read_xlsx(path = "/Users/.../doc.xlsx", col_names = TRUE, na = c("", "NA"))
+View(data)
+
+#Two features are particularly important for Model-Based Network Meta-Analysis (MBNMA): network connectivity and dose-response relationship.
+#We have to check if our dataset has the right format.
+
+
+#EXAMINING NETWORK CONNECTIVITY
+
+network <- mbnma.network(data)
+
+##Treatment-level (specific doses of a specific agent)
+
+plot(network, v.color = "agent", label.distance = 4, remove.loops = TRUE)
+
+##Agent-level
+
+plot(network, level = "agent", label.distance = 3)
+
+##Connectivity checking and information about the network
+
+summary(network)
+
+
+#EXAMINING THE DOSE-RESPONSE RELATIONSHIP
+
+#To consider what functional and appropriate forms can be applied to model the dose-response relationship, it is useful to look at the results
+#of a "split" network meta-analysis (NMA).
+
+nma_network <- MBNMAdose::mbnma.run(network, method = "random")
+print(nma_network)
+
+##We can examine the consistency of out split model comparing with an unrelated mean effects (UME) model.
+
+ume_network <- MBNMAdose::mbnma.run(netowrk, method = "random", UME = TRUE)
+print(ume_network) #if no signiificant differences: good fit.
+
+##Draw plot of NMA estimates plotted by dose
+
+plot(nma_network) + 
+xlab("Dose (METs)") + 
+ylab("Effect size (Hedges' g)") +
+scale_x_continuous(breaks = c(0, 500, 750, 1000, 2000)) +
+theme_minimal() #It seems that dose-response relationship follows a positive trend: the higher the dose, the greater effects on cognitive function.
+#However, the relationship does not seem linear.
+
+
+#DOSE-RESPONSE MBNMA
+
+#First, we must be clear about how to modeling the dose-response relationship: what functions we are going to use and what parameters we are going to estimate.
+
+#Emax function
+
+emax <- mbnma.emax(network, emax = "rel", ed50 = "rel", method = "random")
+print(emax)
+
+#Restricted cubic spline and knots
+
+knots <- c(0.1, 0.5, 0.9)
+rcs <- mbnma.run(network, fun = "rcs", knots = knots, method = "random")
+print(rcs)
+
+#Non-parametric dose-response function
+
+non_param <- mbnma.run(network, fun = "nonparam.up", method = "random")
+print(non_param)
+
+#After comparing the adjusted models, Emax function and Restricted cubic spline (rcs) function presented best fits. Emax function allowed us to know what is the maximum response of each agent (Emax parameter),
+#and at which dose the half of the maximum response is achieved (ED50 parameter). Finally, we used the rcs function to model post-estimations of the dose-response associations.
+
+##To assess how well a model fits the data
+
+###Deviance plots
+
+devplot <- MBNMAdose::devplot(emax, plot.type = "boxplot")
+devplot.1 <- MBNMAdose::devplot(rcs, plot.type = "boxplot")
+
+###Fitted values
+
+fits <- MBNMAdose::fitplot(emax)
+fits.1 <- MBNMAdose::fitplot(rcs)
+
+#Forest plots
+
+plot(emax)
+plot(rcs)
+plot(non_param)
+
+#PREDICTIONS
+
+#After performing a MBNMA, responses can be predicted from the model parameters estimates. E0 is the response at dose = 0 (equivalent to Placebo response). The placebo response must be modeled
+#by the user in some way (deterministic, stochastic, from a set of studies, ...). 
+
+#Predicting a continuous dose-response relationship for each agent with a deterministic estimate E0 = 0 (i.e., assumption: placebo response = 0)
+
+doses <- list("Aerobic and resistance exercises" = seq(0, 1800, 1),
+              "Aerobic, resistance and balance exercises" = seq(0, 1800, 1),
+              "Body-and-free weights and machines" = seq(0, 1800, 1),
+              "Cycling" = seq(0, 1800, 1),
+              "Mixed aerobic exercises" = seq(0, 1800, 1),
+              "Resistance and balance exercises" = seq(0, 1800, 1),
+              "Resistance bands" = seq(0, 1800, 1),
+              "Walking" = seq(0, 1800, 1))
+              
+pred <- predict(rcs, E0 = 0, exact.doses = doses, n.doses = 1800)
+plot(pred)
+
+plot(pred, disp.obs = TRUE) #shaded counts of the number of studies in the original dataset that investigate each dose of an agent
+plot(pred, overlay.split = TRUE, method = "random") #plot the results of a "split" NMA
+
+
+#TRANSITIVITY TESTING
+
+install.packages("overlapping")
+library(overlapping)
+
+splitcomps <- inconsistency.loops(network$data.ab, incldr = TRUE)
+print(splitcomps)
+
+nodesplit <- mbnma.nodesplit(network, fun = "emax", comparisons = splitcomps, method = "random")
+print(nodesplit)
+
+##Different plots for transitivity analysis
+
+plot(nodesplit, plot.type = "forest")
+plot(nodesplit, plot.type = "density")
+
